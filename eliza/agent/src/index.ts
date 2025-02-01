@@ -417,7 +417,7 @@ export function createAgent(
         ].filter(Boolean),
         providers: [],
         actions: [
-            validateAndTweetProposal,
+            // validateAndTweetProposal,
         ],
         services: [],
         managers: [],
@@ -530,37 +530,56 @@ const rl = readline.createInterface({
     output: process.stdout,
 });
 
+// File to save messages
+const LOG_FILE = path.resolve(__dirname, "interactions_log.json");
+
+// Load messages from the log file
+function loadMessages() {
+    if (fs.existsSync(LOG_FILE)) {
+        try {
+            return JSON.parse(fs.readFileSync(LOG_FILE, "utf-8"));
+        } catch (error) {
+            console.error("Error loading message log:", error);
+            return [];
+        }
+    }
+    return [];
+}
+
+// Save messages to the log file
+function saveMessages(messages) {
+    try {
+        fs.writeFileSync(LOG_FILE, JSON.stringify(messages, null, 2));
+    } catch (error) {
+        console.error("Error saving message log:", error);
+    }
+}
+
 async function handleUserInput(input, agentId, runtime) {
     if (input.toLowerCase() === "exit") {
         gracefulExit();
-    } else if (input.toLowerCase().startsWith("tweet-proposal")) {
-        // Extract the title and body from the input
-        const [_, title, body] = input.split("|");
-        if (!title || !body) {
-            elizaLogger.log("Invalid proposal format. Ensure your input is in the format 'tweet-proposal|Title|Body'.");
-            return;
-        }
-
-        // Construct the proposal text in the expected format
-        const proposalText = `title:${title.trim()}|body:${body.trim()}`;
-
-        // Construct a valid Memory object
-        const memory: Memory = {
-            userId: stringToUuid("user"), // Replace with actual user ID
-            agentId: agentId,
-            roomId: stringToUuid("room"), // Replace with actual room ID
-            content: {
-                text: proposalText, // Correct format for validateAndTweetProposal
-            },
-            createdAt: Date.now(), // Optional timestamp
-            unique: true, // Optional: mark as unique
-        };
-
-        // Call the custom action's handler
-        const result = await validateAndTweetProposal.handler(runtime, memory);
-        elizaLogger.log(`Custom Action Result: ${result}`);
-        return;
     }
+    const messages = loadMessages();
+    messages.push({ role: "input", content: input});
+    if (input.toLowerCase().startsWith("tweet-proposal")) {
+        let [_,title,body] = input.split('|');
+        if (!title || !body) {
+            console.error("Invalid proposal format: Must include both title and body.");
+            return; // Exit early if invalid
+        }
+    
+        const prompt = `
+            Please analyze this new Agent/Module Application. In 1-2 paragraphs, discuss how it aligns with Torus’s 
+            stakeholder-driven network, whether it provides a clear use case, and whether the documentation 
+            is adequate. Mention any critical improvements, then provide a final verdict (APPROVED or REJECTED).
+            
+            Application Title: ${title.trim()}\n
+            Application Body: ${body.trim()}
+        `;
+        input = prompt;
+    } else if (input.toLowerCase().startsWith("module-application"))
+    messages.push({ role: "prompt", content: input });
+    elizaLogger.log(input)
 
     try {
         const serverPort = parseInt(settings.SERVER_PORT || "3000");
@@ -577,11 +596,16 @@ async function handleUserInput(input, agentId, runtime) {
                 }),
             }
         );
-
+        
         const data = await response.json();
+        console.log(data);
         data.forEach((message) =>
             elizaLogger.log(`${"Agent"}: ${message.text}`)
         );
+        data.forEach((message) =>
+            messages.push({ role: "agent", content: message.text })
+        );
+        saveMessages(messages);
     } catch (error) {
         console.error("Error fetching response:", error);
     }
